@@ -1,6 +1,6 @@
-name: qiandao
-desc: 高级签到插件，包含等级系统、排行榜、商店系统
-help: 发送/签到 即可以进行签到，发送 /个人信息 查看个人信息，发送 /我的排名 查看我的排名，发送 /连续签到排行榜 查看连续签到排行榜，发送 /等级排行榜 查看等级排行榜，发送 /世界排行榜 查看世界排行榜，发送 /购买 补签卡 数量 购买补签卡
+name: ZHUANRENG
+desc: 转人工系统
+help: 转人工系统
 version: 1.0.0
-author: qiandao
+author: ZRG
 repo: https://github.com/520TinyXI/qiandao.git
