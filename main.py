@@ -1,296 +1,245 @@
+import time
+import json
+import os
+import asyncio
+from datetime import datetime
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-import os
-import datetime
-import random
 
-from .database import SignDatabase
-from .image_generator import ImageGenerator
-from .sign_manager import SignManager
+# 存储结构
+class AssistantStorage:
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+        self.banned_users = set()
+        self.message_pool = {}
+        self.current_id = 1
+        
+        # 确保数据目录存在
+        os.makedirs(data_dir, exist_ok=True)
+        self.load_data()
 
-@register("astrbot_plugin_advanced_sign", "XiaoJie", "一个高级签到插件，包含等级系统、排行榜、商店系统", "1.0.0", "https://github.com/XiaoJie/astrbot_plugin_advanced_sign")
-class AdvancedSignPlugin(Star):
+    def save_data(self):
+        """保存数据到文件"""
+        data = {
+            'banned_users': list(self.banned_users),
+            'message_pool': self.message_pool,
+            'current_id': self.current_id
+        }
+        with open(os.path.join(self.data_dir, 'assistant_data.json'), 'w') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def load_data(self):
+        """从文件加载数据"""
+        try:
+            path = os.path.join(self.data_dir, 'assistant_data.json')
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    self.banned_users = set(data.get('banned_users', []))
+                    self.message_pool = data.get('message_pool', {})
+                    self.current_id = data.get('current_id', 1)
+        except Exception as e:
+            logger.error(f"加载数据失败: {str(e)}")
+
+    def add_message(self, user_id, user_name, content, unified_msg_origin):
+        """添加消息到消息池"""
+        msg_id = self.current_id
+        self.current_id += 1
+        
+        message = {
+            'user_id': user_id,
+            'user_name': user_name,
+            'content': content,
+            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'unified_msg_origin': unified_msg_origin
+        }
+        
+        self.message_pool[msg_id] = message
+        self.save_data()
+        return msg_id
+
+    def get_message(self, msg_id):
+        """获取指定ID的消息"""
+        return self.message_pool.get(msg_id)
+
+    def remove_message(self, msg_id):
+        """移除指定ID的消息"""
+        if msg_id in self.message_pool:
+            del self.message_pool[msg_id]
+            self.save_data()
+            return True
+        return False
+
+    def clear_messages(self):
+        """清空消息池"""
+        self.message_pool = {}
+        self.save_data()
+
+    def ban_user(self, user_id):
+        """封禁用户"""
+        self.banned_users.add(user_id)
+        self.save_data()
+
+    def unban_user(self, user_id):
+        """解封用户"""
+        if user_id in self.banned_users:
+            self.banned_users.remove(user_id)
+            self.save_data()
+            return True
+        return False
+
+    def is_banned(self, user_id):
+        """检查用户是否被封禁"""
+        return user_id in self.banned_users
+
+    def get_all_message_ids(self):
+        """获取所有消息ID"""
+        return list(self.message_pool.keys())
+
+@register("assistant", "开发者", "机器人转人工插件", "1.0.0")
+class AssistantPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.db = SignDatabase(os.path.dirname(__file__))
-        self.img_gen = ImageGenerator(os.path.dirname(__file__))
+        # 创建数据存储目录
+        data_dir = os.path.join(context.data_path, "plugins", "assistant")
+        self.storage = AssistantStorage(data_dir)
         
-    @filter.command("签到")
-    async def sign(self, event: AstrMessageEvent):
-        '''每日签到'''
-        try:
-            user_id = event.get_sender_id()
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            today = datetime.date.today().strftime('%Y-%m-%d')
-            
-            user_data = self.db.get_user_data(user_id)
-            
-            if user_data and user_data.get('last_sign') == today:
-                image_path = await self.img_gen.create_sign_image("今天已经签到过啦~")
-                if image_path:
-                    yield event.image_result(image_path)
-                    if os.path.exists(image_path):
-                        os.remove(image_path)
-                return
+        # 创建管理员通知任务
+        asyncio.create_task(self.notify_admin_startup())
 
-            # 执行签到逻辑
-            result = SignManager.daily_sign(user_data, group_id)
-            
-            # 更新用户数据
-            self.db.update_user_data(
-                user_id,
-                group_id=group_id,
-                total_days=result['total_days'],
-                last_sign=today,
-                continuous_days=result['continuous_days'],
-                exp=result['exp'],
-                coins=result['coins'],
-                level=result['level'],
-                next_level_exp=result['next_level_exp']
+    async def notify_admin_startup(self):
+        """插件启动时通知管理员"""
+        await asyncio.sleep(5)  # 等待系统初始化完成
+        logger.info("机器人转人工插件已启动")
+    
+    async def terminate(self):
+        """插件终止时保存数据"""
+        self.storage.save_data()
+        logger.info("机器人转人工插件已终止")
+
+    # 用户指令：转人工
+    @filter.command("转人工")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def request_assistant(self, event: AstrMessageEvent, content: str = None):
+        """用户请求转人工服务"""
+        user_id = event.get_sender_id()
+        user_name = event.get_sender_name()
+        
+        # 检查是否被封禁
+        if self.storage.is_banned(user_id):
+            return event.plain_result("您已被封禁，无法使用转人工服务")
+        
+        # 检查内容是否为空
+        if not content:
+            return event.plain_result("请提供需要转达的内容，格式: /转人工 你好")
+        
+        # 添加消息到消息池
+        msg_id = self.storage.add_message(
+            user_id, 
+            user_name, 
+            content, 
+            event.unified_msg_origin
+        )
+        
+        # 通知管理员
+        message = (
+            f"用户【{user_name}】【{user_id}】【{msg_id}】传话啦！！！\n"
+            f"内容: {content}\n"
+            f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+        # 获取所有管理员
+        admins = self.context.get_config().get('admins', [])
+        for admin_id in admins:
+            await self.context.send_message(
+                f"{event.platform_meta.name}:PRIVATE_MESSAGE:{admin_id}",
+                [{"type": "plain", "text": message}]
             )
+        
+        return event.plain_result("您的消息已转达给管理员，请耐心等待回复")
 
-            # 存储用户昵称
-            user_name = event.get_sender_name()
-            self.db.update_user_name(user_id, user_name, group_id)
-            
-            # 记录签到历史
-            self.db.log_sign(user_id, result['exp'], result['coins'])
-            
-            # 生成结果消息
-            result_text = SignManager.format_sign_result(result)
+    # 管理员指令：回复用户
+    @filter.command("回复")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def reply_to_user(self, event: AstrMessageEvent, msg_id: int, content: str):
+        """管理员回复用户"""
+        message = self.storage.get_message(msg_id)
+        if not message:
+            return event.plain_result(f"消息ID {msg_id} 不存在")
+        
+        # 发送回复给用户
+        reply_msg = (
+            f"管理员回消息啦！！\n"
+            f"内容: {content}\n"
+            f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+        await self.context.send_message(
+            message['unified_msg_origin'],
+            [{"type": "plain", "text": reply_msg}]
+        )
+        
+        # 从消息池中移除
+        self.storage.remove_message(msg_id)
+        return event.plain_result("回复已发送")
 
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
+    # 管理员指令：封禁用户
+    @filter.command("封禁")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def ban_user(self, event: AstrMessageEvent, user_id: str):
+        """封禁用户"""
+        self.storage.ban_user(user_id)
+        return event.plain_result(f"用户 {user_id} 已被封禁")
 
-        except Exception as e:
-            logger.error(f"签到失败: {str(e)}")
-            yield event.plain_result("签到失败了~请联系管理员检查日志")
-            
-    @filter.command("个人信息")
-    async def user_info(self, event: AstrMessageEvent):
-        '''查看个人信息'''
-        try:
-            user_id = event.get_sender_id()
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            
-            user_data = self.db.get_user_data(user_id)
-            if not user_data:
-                yield event.plain_result("您还没有签到过哦~")
-                return
-                
-            result_text = SignManager.format_user_info(user_data)
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
+    # 管理员指令：解封用户
+    @filter.command("解封")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def unban_user(self, event: AstrMessageEvent, user_id: str):
+        """解封用户"""
+        if self.storage.unban_user(user_id):
+            return event.plain_result(f"用户 {user_id} 已解封")
+        return event.plain_result(f"用户 {user_id} 不在封禁列表中")
 
-        except Exception as e:
-            logger.error(f"获取个人信息失败: {str(e)}")
-            yield event.plain_result("获取个人信息失败~请联系管理员检查日志")
-            
+    # 管理员指令：查看消息池
+    @filter.command("查看消息池")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def list_messages(self, event: AstrMessageEvent):
+        """列出所有待回复消息"""
+        message_ids = self.storage.get_all_message_ids()
+        if not message_ids:
+            return event.plain_result("当前没有待回复消息")
+        
+        return event.plain_result(f"待回复消息ID: {', '.join(map(str, message_ids))}")
 
-    @filter.command("连续签到排行榜")
-    async def continuous_ranking(self, event: AstrMessageEvent):
-        '''连续签到排行榜'''
-        try:
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            
-            ranking_data = self.db.get_continuous_sign_ranking(10)
-            result_text = SignManager.format_continuous_ranking(ranking_data)
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
+    # 管理员指令：查看消息详情
+    @filter.command("查看消息")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def view_message(self, event: AstrMessageEvent, msg_id: int):
+        """查看消息详情"""
+        message = self.storage.get_message(msg_id)
+        if not message:
+            return event.plain_result(f"消息ID {msg_id} 不存在")
+        
+        msg_content = (
+            f"用户【{message['user_name']}】【{message['user_id']}】【{msg_id}】传话啦！！！\n"
+            f"内容: {message['content']}\n"
+            f"时间: {message['time']}"
+        )
+        
+        return event.plain_result(msg_content)
 
-        except Exception as e:
-            logger.error(f"获取连续签到排行榜失败: {str(e)}")
-            yield event.plain_result("获取连续签到排行榜失败~请联系管理员检查日志")
-            
-    @filter.command("等级排行榜")
-    async def level_ranking(self, event: AstrMessageEvent):
-        '''等级排行榜'''
-        try:
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            
-            ranking_data = self.db.get_level_ranking(10)
-            result_text = SignManager.format_level_ranking(ranking_data)
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-
-        except Exception as e:
-            logger.error(f"获取等级排行榜失败: {str(e)}")
-            yield event.plain_result("获取等级排行榜失败~请联系管理员检查日志")
-            
-    @filter.command("世界排行榜")
-    async def world_ranking(self, event: AstrMessageEvent):
-        '''世界总签到排行榜'''
-        try:
-            ranking_data = self.db.get_world_sign_ranking(10)
-            result_text = SignManager.format_world_ranking(ranking_data)
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-
-        except Exception as e:
-            logger.error(f"获取世界排行榜失败: {str(e)}")
-            yield event.plain_result("获取世界排行榜失败~请联系管理员检查日志")
-            
-    @filter.command("购买")
-    async def buy_item(self, event: AstrMessageEvent):
-        '''购买物品'''
-        try:
-            user_id = event.get_sender_id()
-            args = event.message_str.split()[1:]
-            
-            if len(args) < 2:
-                yield event.plain_result("命令格式错误，请使用: /购买 补签卡 数量")
-                return
-                
-            item_name = args[0]
-            try:
-                quantity = int(args[1])
-            except ValueError:
-                yield event.plain_result("数量必须是数字")
-                return
-                
-            if item_name != "补签卡":
-                yield event.plain_result("目前只能购买补签卡")
-                return
-                
-            # 执行购买逻辑
-            result = SignManager.buy_item(user_id, item_name, quantity, self.db)
-            
-            if result['success']:
-                yield event.plain_result(f"购买成功！花费了{result['cost']}金币，获得了{quantity}张补签卡")
-            else:
-                yield event.plain_result(f"购买失败：{result['message']}")
-
-        except Exception as e:
-            logger.error(f"购买物品失败: {str(e)}")
-            yield event.plain_result("购买物品失败~请联系管理员检查日志")
-            
-    @filter.command("补签")
-    async def resign(self, event: AstrMessageEvent):
-        '''补签'''
-        try:
-            user_id = event.get_sender_id()
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            args = event.message_str.split()[1:]
-            
-            try:
-                days = int(args[0]) if args else 1
-            except ValueError:
-                yield event.plain_result("补签天数必须是数字")
-                return
-                
-            # 执行补签逻辑
-            result = SignManager.resign(user_id, days, group_id, self.db)
-            
-            if result['success']:
-                yield event.plain_result(f"补签成功！消耗了{result['cost']}张补签卡和{result['coins']}金币")
-            else:
-                yield event.plain_result(f"补签失败：{result['message']}")
-
-        except Exception as e:
-            logger.error(f"补签失败: {str(e)}")
-            yield event.plain_result("补签失败~请联系管理员检查日志")
-            
-    @filter.command("查看背包")
-    async def view_inventory(self, event: AstrMessageEvent):
-        '''查看背包'''
-        try:
-            user_id = event.get_sender_id()
-            
-            inventory = self.db.get_user_inventory(user_id)
-            result_text = SignManager.format_inventory(inventory)
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-
-        except Exception as e:
-            logger.error(f"查看背包失败: {str(e)}")
-            yield event.plain_result("查看背包失败~请联系管理员检查日志")
-            
-    @filter.command("签到商店")
-    async def sign_shop(self, event: AstrMessageEvent):
-        '''签到商店'''
-        try:
-            # 显示商店商品信息
-            shop_items = [
-                ("补签卡", 100, "用于补签，每次补签消耗1张补签卡和10金币"),
-            ]
-            
-            result_text = "签到商店\n"
-            result_text += "=" * 20 + "\n"
-            for item_name, price, description in shop_items:
-                result_text += f"{item_name} - {price}金币\n{description}\n\n"
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-
-        except Exception as e:
-            logger.error(f"查看签到商店失败: {str(e)}")
-            yield event.plain_result("查看签到商店失败~请联系管理员检查日志")
-            
-    @filter.command("我的排名")
-    async def my_ranking(self, event: AstrMessageEvent):
-        '''显示自己在世界排行榜、连续签到排行榜和等级排行榜的排名'''
-        try:
-            user_id = event.get_sender_id()
-            group_id = event.get_group_id() if event.message_obj.group_id else None
-            
-            # 获取用户数据
-            user_data = self.db.get_user_data(user_id)
-            if not user_data:
-                yield event.plain_result("您还没有签到过哦~")
-                return
-                
-            # 获取各项排名（使用修复后的方法）
-            world_total_rank = self.db.get_world_sign_rank(user_id)
-            continuous_rank = self.db.get_continuous_sign_rank(user_id)
-            
-            # 获取等级排名
-            self.db.cursor.execute('''
-                SELECT COUNT(*) + 1 FROM sign_data
-                WHERE level > ? OR (level = ? AND exp > ?)
-            ''', (user_data['level'], user_data['level'], user_data['exp']))
-            level_rank_row = self.db.cursor.fetchone()
-            level_rank = level_rank_row[0] if level_rank_row else 1
-            
-            # 格式化结果
-            result_text = SignManager.format_my_ranking(
-                world_total_rank=world_total_rank,
-                continuous_rank=continuous_rank,
-                level_rank=level_rank
-            )
-            
-            image_path = await self.img_gen.create_sign_image(result_text)
-            if image_path:
-                yield event.image_result(image_path)
-                if os.path.exists(image_path):
-                    os.remove(image_path)
-
-        except Exception as e:
-            logger.error(f"获取我的排名失败: {str(e)}")
-            yield event.plain_result("获取我的排名失败~请联系管理员检查日志")
+    # 管理员指令：清理内存
+    @filter.command("清理内存")
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def clear_memory(self, event: AstrMessageEvent):
+        """清理消息池"""
+        count = len(self.storage.message_pool)
+        self.storage.clear_messages()
+        return event.plain_result(f"已清理 {count} 条消息")
