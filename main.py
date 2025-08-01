@@ -63,9 +63,11 @@ class MessagePool:
 class TransferToHumanPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 使用os.path.dirname(__file__)获取插件目录，而不是context.data_path
-        plugin_dir = os.path.dirname(__file__)
-        self.message_pool = MessagePool(plugin_dir)
+        # 获取插件数据存储路径
+        data_dir = os.path.join(context.get_data_dir(), "plugins", "zrg")
+        os.makedirs(data_dir, exist_ok=True)
+        
+        self.message_pool = MessagePool(data_dir)
         self.admin_users = set()  # 管理员用户集合
         
         # 添加默认管理员（可以根据需要修改）
