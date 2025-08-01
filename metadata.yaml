@@ -1,6 +1,6 @@
-name: ZHUANRENG
-desc: 转人工系统
-help: 转人工系统
-version: 1.0.0
-author: ZRG
-repo: https://github.com/520TinyXI/ZRG
+name: astrbot_plugin_transfer_to_human
+desc: QQ机器人转人工插件，实现用户与管理员之间的消息传递
+help: 发送 /转人工 <消息内容> 开始转人工流程
+version: v1.0.0
+author: YourName
+repo: https://github.com/yourname/astrbot_plugin_transfer_to_human
