@@ -101,8 +101,11 @@ class AssistantStorage:
 class AssistantPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 创建数据存储目录
-        data_dir = os.path.join(context.data_path, "plugins", "assistant")
+        # 修复：使用正确的数据目录获取方式
+        # 根据AstrBot规范，插件数据应存储在data/plugins/<插件名>目录
+        base_dir = os.getcwd()  # 获取当前工作目录
+        data_dir = os.path.join(base_dir, 'data', 'plugins', 'assistant')
+        os.makedirs(data_dir, exist_ok=True)
         self.storage = AssistantStorage(data_dir)
         
         # 创建管理员通知任务
@@ -128,11 +131,13 @@ class AssistantPlugin(Star):
         
         # 检查是否被封禁
         if self.storage.is_banned(user_id):
-            return event.plain_result("您已被封禁，无法使用转人工服务")
+            yield event.plain_result("您已被封禁，无法使用转人工服务")
+            return
         
         # 检查内容是否为空
         if not content:
-            return event.plain_result("请提供需要转达的内容，格式: /转人工 你好")
+            yield event.plain_result("请提供需要转达的内容，格式: /转人工 你好")
+            return
         
         # 添加消息到消息池
         msg_id = self.storage.add_message(
@@ -150,14 +155,15 @@ class AssistantPlugin(Star):
         )
         
         # 获取所有管理员
-        admins = self.context.get_config().get('admins', [])
+        config = self.context.get_config()
+        admins = config.get('admins', [])
         for admin_id in admins:
             await self.context.send_message(
                 f"{event.platform_meta.name}:PRIVATE_MESSAGE:{admin_id}",
                 [{"type": "plain", "text": message}]
             )
         
-        return event.plain_result("您的消息已转达给管理员，请耐心等待回复")
+        yield event.plain_result("您的消息已转达给管理员，请耐心等待回复")
 
     # 管理员指令：回复用户
     @filter.command("回复")
@@ -167,7 +173,8 @@ class AssistantPlugin(Star):
         """管理员回复用户"""
         message = self.storage.get_message(msg_id)
         if not message:
-            return event.plain_result(f"消息ID {msg_id} 不存在")
+            yield event.plain_result(f"消息ID {msg_id} 不存在")
+            return
         
         # 发送回复给用户
         reply_msg = (
@@ -183,7 +190,7 @@ class AssistantPlugin(Star):
         
         # 从消息池中移除
         self.storage.remove_message(msg_id)
-        return event.plain_result("回复已发送")
+        yield event.plain_result("回复已发送")
 
     # 管理员指令：封禁用户
     @filter.command("封禁")
@@ -192,7 +199,7 @@ class AssistantPlugin(Star):
     async def ban_user(self, event: AstrMessageEvent, user_id: str):
         """封禁用户"""
         self.storage.ban_user(user_id)
-        return event.plain_result(f"用户 {user_id} 已被封禁")
+        yield event.plain_result(f"用户 {user_id} 已被封禁")
 
     # 管理员指令：解封用户
     @filter.command("解封")
@@ -201,8 +208,9 @@ class AssistantPlugin(Star):
     async def unban_user(self, event: AstrMessageEvent, user_id: str):
         """解封用户"""
         if self.storage.unban_user(user_id):
-            return event.plain_result(f"用户 {user_id} 已解封")
-        return event.plain_result(f"用户 {user_id} 不在封禁列表中")
+            yield event.plain_result(f"用户 {user_id} 已解封")
+        else:
+            yield event.plain_result(f"用户 {user_id} 不在封禁列表中")
 
     # 管理员指令：查看消息池
     @filter.command("查看消息池")
@@ -212,9 +220,10 @@ class AssistantPlugin(Star):
         """列出所有待回复消息"""
         message_ids = self.storage.get_all_message_ids()
         if not message_ids:
-            return event.plain_result("当前没有待回复消息")
+            yield event.plain_result("当前没有待回复消息")
+            return
         
-        return event.plain_result(f"待回复消息ID: {', '.join(map(str, message_ids))}")
+        yield event.plain_result(f"待回复消息ID: {', '.join(map(str, message_ids))}")
 
     # 管理员指令：查看消息详情
     @filter.command("查看消息")
@@ -224,7 +233,8 @@ class AssistantPlugin(Star):
         """查看消息详情"""
         message = self.storage.get_message(msg_id)
         if not message:
-            return event.plain_result(f"消息ID {msg_id} 不存在")
+            yield event.plain_result(f"消息ID {msg_id} 不存在")
+            return
         
         msg_content = (
             f"用户【{message['user_name']}】【{message['user_id']}】【{msg_id}】传话啦！！！\n"
@@ -232,7 +242,7 @@ class AssistantPlugin(Star):
             f"时间: {message['time']}"
         )
         
-        return event.plain_result(msg_content)
+        yield event.plain_result(msg_content)
 
     # 管理员指令：清理内存
     @filter.command("清理内存")
@@ -242,4 +252,4 @@ class AssistantPlugin(Star):
         """清理消息池"""
         count = len(self.storage.message_pool)
         self.storage.clear_messages()
-        return event.plain_result(f"已清理 {count} 条消息")
+        yield event.plain_result(f"已清理 {count} 条消息")
