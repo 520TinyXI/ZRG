@@ -101,11 +101,8 @@ class AssistantStorage:
 class AssistantPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 修复：使用正确的数据目录获取方式
-        # 根据AstrBot规范，插件数据应存储在data/plugins/<插件名>目录
-        base_dir = os.getcwd()  # 获取当前工作目录
-        data_dir = os.path.join(base_dir, 'data', 'plugins', 'assistant')
-        os.makedirs(data_dir, exist_ok=True)
+        # 修复：使用正确的API获取数据目录
+        data_dir = context.get_data_path("assistant")
         self.storage = AssistantStorage(data_dir)
         
         # 创建管理员通知任务
