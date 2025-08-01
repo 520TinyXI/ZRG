@@ -1,6 +1,17 @@
-name: astrbot_plugin_transfer_to_human
-desc: QQ机器人转人工插件，实现用户与管理员之间的消息传递
-help: 发送 /转人工 <消息内容> 开始转人工流程
-version: v1.0.0
-author: YourName
-repo: https://github.com/yourname/astrbot_plugin_transfer_to_human
+name: "zrg"
+desc: "一个转人工插件，用户可以发送消息给管理员，管理员可以回复用户消息"
+help: |
+  用户指令：
+  - 转人工 <消息内容> : 发送消息给管理员
+  - /transfer <消息内容> : 发送消息给管理员
+  
+  管理员指令：
+  - /回复 <消息编号> <回复内容> : 回复用户消息
+  - /封禁 <用户ID> : 封禁用户
+  - /解封 <用户ID> : 解封用户
+  - /查看消息池 : 查看所有消息
+  - /查看消息 <消息编号> : 查看特定消息
+  - /清理内存 : 清空消息池和封禁列表
+version: "1.0.0"
+author: "Soulter"
+repo: "https://github.com/Soulter/AstrBot"
