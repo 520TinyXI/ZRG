@@ -1,3 +1,5 @@
+import os
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
@@ -13,14 +15,86 @@ class UserMessage:
         self.content = content
         self.timestamp = timestamp
 
+    def to_dict(self):
+        return {
+            "user_id": self.user_id,
+            "nickname": self.nickname,
+            "content": self.content,
+            "timestamp": self.timestamp
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(
+            user_id=data["user_id"],
+            nickname=data["nickname"],
+            content=data["content"],
+            timestamp=data["timestamp"]
+        )
+
 # 插件主类
 @register("human_transfer", "AstrBot开发者", "机器人转人工插件", "1.0.0")
 class HumanTransferPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        self.context = context
         self.message_pool: Dict[int, UserMessage] = {}  # 消息池，编号->消息
         self.banned_users = set()  # 被封禁的用户QQ号
         self.next_id = 1  # 下一个可用的消息编号
+        
+        # 创建数据存储目录
+        self.data_dir = os.path.join(self.context.get_data_path(), "human_transfer")
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        # 加载保存的数据
+        self._load_data()
+
+    def _get_data_path(self, filename: str) -> str:
+        """获取数据文件完整路径"""
+        return os.path.join(self.data_dir, filename)
+    
+    def _load_data(self):
+        """从文件加载数据"""
+        try:
+            # 加载消息池
+            msg_pool_path = self._get_data_path("message_pool.json")
+            if os.path.exists(msg_pool_path):
+                with open(msg_pool_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.message_pool = {
+                        int(k): UserMessage.from_dict(v) 
+                        for k, v in data["message_pool"].items()
+                    }
+                    self.next_id = data["next_id"]
+            
+            # 加载封禁列表
+            banned_path = self._get_data_path("banned_users.json")
+            if os.path.exists(banned_path):
+                with open(banned_path, "r", encoding="utf-8") as f:
+                    self.banned_users = set(json.load(f))
+        except Exception as e:
+            logger.error(f"加载数据失败: {str(e)}")
+    
+    def _save_data(self):
+        """保存数据到文件"""
+        try:
+            # 保存消息池
+            msg_pool_path = self._get_data_path("message_pool.json")
+            with open(msg_pool_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "message_pool": {
+                        k: v.to_dict() 
+                        for k, v in self.message_pool.items()
+                    },
+                    "next_id": self.next_id
+                }, f, ensure_ascii=False, indent=2)
+            
+            # 保存封禁列表
+            banned_path = self._get_data_path("banned_users.json")
+            with open(banned_path, "w", encoding="utf-8") as f:
+                json.dump(list(self.banned_users), f, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"保存数据失败: {str(e)}")
 
     # 用户转人工指令
     @filter.command("转人工")
@@ -46,6 +120,7 @@ class HumanTransferPlugin(Star):
         msg_id = self.next_id
         self.message_pool[msg_id] = UserMessage(user_id, nickname, content, timestamp)
         self.next_id += 1
+        self._save_data()
         
         # 通知管理员
         admin_msg = (
@@ -86,12 +161,13 @@ class HumanTransferPlugin(Star):
             f"时间：{timestamp}"
         )
         await self.context.send_message(
-            f"qq:{filter.EventMessageType.PRIVATE_MESSAGE}:{user_msg.user_id}", 
+            self._get_unified_msg_origin(user_msg.user_id),
             [Plain(user_msg_content)]
         )
         
-        # 删除消息
+        # 删除消息并保存
         del self.message_pool[msg_id]
+        self._save_data()
         yield event.plain_result(f"已回复用户【{user_msg.nickname}】")
 
     # 管理员封禁指令
@@ -104,6 +180,7 @@ class HumanTransferPlugin(Star):
             return
             
         self.banned_users.add(user_id)
+        self._save_data()
         yield event.plain_result(f"已封禁用户 {user_id}")
 
     # 管理员解封指令
@@ -117,6 +194,7 @@ class HumanTransferPlugin(Star):
             
         if user_id in self.banned_users:
             self.banned_users.remove(user_id)
+            self._save_data()
             yield event.plain_result(f"已解封用户 {user_id}")
         else:
             yield event.plain_result(f"用户 {user_id} 未被封禁")
@@ -162,6 +240,7 @@ class HumanTransferPlugin(Star):
     async def clear_memory(self, event: AstrMessageEvent):
         count = len(self.message_pool)
         self.message_pool.clear()
+        self._save_data()
         yield event.plain_result(f"已清理所有缓存消息，共 {count} 条")
 
     # 管理员指令权限检查
@@ -178,12 +257,15 @@ class HumanTransferPlugin(Star):
         # 给每个管理员发送消息
         for admin_id in admins:
             await self.context.send_message(
-                f"qq:{filter.EventMessageType.PRIVATE_MESSAGE}:{admin_id}", 
+                self._get_unified_msg_origin(admin_id), 
                 [Plain(message)]
             )
+    
+    def _get_unified_msg_origin(self, user_id: str) -> str:
+        """获取统一消息来源标识符"""
+        return f"qq:{filter.EventMessageType.PRIVATE_MESSAGE}:{user_id}"
 
     # 插件终止时清理资源
     async def terminate(self):
-        logger.info("转人工插件已终止，清理资源")
-        self.message_pool.clear()
-        self.banned_users.clear()
+        logger.info("转人工插件已终止，保存数据")
+        self._save_data()
