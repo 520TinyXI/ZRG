@@ -1,257 +1,189 @@
-from astrbot.api.event import filter, AstrMessageEvent
+from datetime import datetime
+from typing import Dict, List, Optional
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-import os
+from astrbot.api.message_components import Plain
 
-class MessagePool:
-    def __init__(self, plugin_dir: str):
-        self.messages = []  # 存储消息的列表
-        self.banned_users = set()  # 存储被封禁用户的集合
-        self.plugin_dir = plugin_dir
-        
-    def add_message(self, user_id: str, message: str) -> int:
-        """添加消息到消息池，返回消息ID或None（如果用户被封禁）"""
-        if user_id in self.banned_users:
-            return None  # 被封禁用户不能添加消息
-        message_id = len(self.messages)
-        self.messages.append({
-            "id": message_id,
-            "user_id": user_id,
-            "message": message,
-            "replied": False
-        })
-        return message_id
-        
-    def get_messages(self) -> list:
-        """获取所有消息"""
-        return self.messages
-        
-    def get_message_by_id(self, message_id: int) -> dict:
-        """根据ID获取消息"""
-        if 0 <= message_id < len(self.messages):
-            return self.messages[message_id]
-        return None
-        
-    def mark_as_replied(self, message_id: int):
-        """标记消息为已回复"""
-        if 0 <= message_id < len(self.messages):
-            self.messages[message_id]["replied"] = True
-            
-    def ban_user(self, user_id: str):
-        """封禁用户"""
-        self.banned_users.add(user_id)
-        
-    def unban_user(self, user_id: str):
-        """解封用户"""
-        self.banned_users.discard(user_id)
-        
-    def is_banned(self, user_id: str) -> bool:
-        """检查用户是否被封禁"""
-        return user_id in self.banned_users
-        
-    def get_banned_users(self) -> set:
-        """获取所有被封禁的用户"""
-        return self.banned_users.copy()
-        
-    def clear(self):
-        """清空消息池和封禁列表"""
-        self.messages.clear()
-        self.banned_users.clear()
+# 消息存储结构
+class UserMessage:
+    def __init__(self, user_id: str, nickname: str, content: str, timestamp: str):
+        self.user_id = user_id
+        self.nickname = nickname
+        self.content = content
+        self.timestamp = timestamp
 
-
-@register("zrg", "Soulter", "一个转人工插件，用户可以发送消息给管理员，管理员可以回复用户消息", "1.0.0", "https://github.com/Soulter/AstrBot")
-class TransferToHumanPlugin(Star):
+# 插件主类
+@register("human_transfer", "AstrBot开发者", "机器人转人工插件", "1.0.0")
+class HumanTransferPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 获取插件数据存储路径
-        data_dir = os.path.join(context.get_data_dir(), "plugins", "zrg")
-        os.makedirs(data_dir, exist_ok=True)
-        
-        self.message_pool = MessagePool(data_dir)
-        self.admin_users = set()  # 管理员用户集合
-        
-        # 添加默认管理员（可以根据需要修改）
-        # self.admin_users.add("admin_user_id")
-        
-    def is_admin(self, user_id: str) -> bool:
-        """检查用户是否为管理员"""
-        return user_id in self.admin_users
-        
+        self.message_pool: Dict[int, UserMessage] = {}  # 消息池，编号->消息
+        self.banned_users = set()  # 被封禁的用户QQ号
+        self.next_id = 1  # 下一个可用的消息编号
+
+    # 用户转人工指令
     @filter.command("转人工")
-    @filter.command("/transfer")
-    async def transfer_to_human(self, event: AstrMessageEvent):
-        """用户请求转人工服务"""
-        user_id = event.get_sender_id()
-        message_content = event.get_message_str()
-        
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def transfer_to_human(self, event: AstrMessageEvent, *args):
         # 检查用户是否被封禁
-        if self.message_pool.is_banned(user_id):
-            yield event.plain_result("您已被管理员封禁，无法发送消息。")
+        user_id = event.get_sender_id()
+        if user_id in self.banned_users:
+            yield event.plain_result("您已被管理员封禁，无法使用转人工服务")
+            return
+        
+        # 检查参数是否完整
+        if not args:
+            yield event.plain_result("请提供需要转达的内容，格式：/转人工 你好")
+            return
+        
+        # 获取用户信息
+        nickname = event.get_sender_name()
+        content = " ".join(args)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 创建消息对象并存储
+        msg_id = self.next_id
+        self.message_pool[msg_id] = UserMessage(user_id, nickname, content, timestamp)
+        self.next_id += 1
+        
+        # 通知管理员
+        admin_msg = (
+            f"用户【{nickname}】【{user_id}】【{msg_id}】传话啦！！！\n"
+            f"内容：{content}\n"
+            f"时间：{timestamp}"
+        )
+        await self._notify_admin(admin_msg)
+        
+        yield event.plain_result(f"您的消息已转达给管理员，编号：{msg_id}")
+
+    # 管理员回复指令
+    @filter.command("回复")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def admin_reply(self, event: AstrMessageEvent, msg_id: str, *args):
+        # 检查参数
+        if not msg_id.isdigit() or not args:
+            yield event.plain_result("格式错误，正确格式：/回复 编号 内容")
+            return
+        
+        msg_id = int(msg_id)
+        content = " ".join(args)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 查找消息
+        if msg_id not in self.message_pool:
+            yield event.plain_result(f"找不到编号为 {msg_id} 的消息")
+            return
+        
+        # 获取原始消息
+        user_msg = self.message_pool[msg_id]
+        
+        # 通知用户
+        user_msg_content = (
+            f"管理员回消息啦！！\n"
+            f"内容：{content}\n"
+            f"时间：{timestamp}"
+        )
+        await self.context.send_message(
+            f"qq:{filter.EventMessageType.PRIVATE_MESSAGE}:{user_msg.user_id}", 
+            [Plain(user_msg_content)]
+        )
+        
+        # 删除消息
+        del self.message_pool[msg_id]
+        yield event.plain_result(f"已回复用户【{user_msg.nickname}】")
+
+    # 管理员封禁指令
+    @filter.command("封禁")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def ban_user(self, event: AstrMessageEvent, user_id: str):
+        if not user_id.isdigit():
+            yield event.plain_result("QQ号格式错误")
             return
             
-        # 提取消息内容（去除命令前缀）
-        if message_content.startswith("转人工"):
-            content = message_content[3:].strip()
-        elif message_content.startswith("/transfer"):
-            content = message_content[9:].strip()
+        self.banned_users.add(user_id)
+        yield event.plain_result(f"已封禁用户 {user_id}")
+
+    # 管理员解封指令
+    @filter.command("解封")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def unban_user(self, event: AstrMessageEvent, user_id: str):
+        if not user_id.isdigit():
+            yield event.plain_result("QQ号格式错误")
+            return
+            
+        if user_id in self.banned_users:
+            self.banned_users.remove(user_id)
+            yield event.plain_result(f"已解封用户 {user_id}")
         else:
-            content = message_content
-            
-        # 添加消息到消息池
-        message_id = self.message_pool.add_message(user_id, content)
-        
-        # 检查消息是否添加成功
-        if message_id is None:
-            yield event.plain_result("消息发送失败，您可能已被管理员封禁。")
+            yield event.plain_result(f"用户 {user_id} 未被封禁")
+
+    # 查看消息池指令
+    @filter.command("查看消息池")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def list_messages(self, event: AstrMessageEvent):
+        if not self.message_pool:
+            yield event.plain_result("当前没有待回复的消息")
             return
             
-        # 通知用户消息已发送
-        yield event.plain_result(f"您的消息已发送给管理员，消息编号：{message_id}")
-        
-    @filter.command("/回复")
-    async def admin_reply(self, event: AstrMessageEvent):
-        """管理员回复用户消息"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
+        msg_list = "\n".join([str(msg_id) for msg_id in self.message_pool.keys()])
+        yield event.plain_result(f"待回复消息编号：\n{msg_list}")
+
+    # 查看消息详情指令
+    @filter.command("查看消息")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def view_message(self, event: AstrMessageEvent, msg_id: str):
+        if not msg_id.isdigit():
+            yield event.plain_result("消息编号格式错误")
             return
             
-        message_content = event.get_message_str()
-        
-        # 解析命令参数
-        parts = message_content.split(" ", 2)
-        if len(parts) < 3:
-            yield event.plain_result("命令格式错误。使用方法：/回复 <消息编号> <回复内容>")
+        msg_id = int(msg_id)
+        if msg_id not in self.message_pool:
+            yield event.plain_result(f"找不到编号为 {msg_id} 的消息")
             return
             
-        try:
-            message_id = int(parts[1])
-            reply_content = parts[2]
-        except ValueError:
-            yield event.plain_result("消息编号必须是数字。")
-            return
-            
-        # 获取消息
-        message = self.message_pool.get_message_by_id(message_id)
-        if not message:
-            yield event.plain_result("未找到指定的消息编号。")
-            return
-            
-        # 标记消息为已回复
-        self.message_pool.mark_as_replied(message_id)
-        
-        # 发送回复给用户
-        # 这里需要使用AstrBot的API发送私聊消息
-        # 由于API限制，我们暂时只能通知管理员回复已记录
-        yield event.plain_result(f"已记录对消息#{message_id}的回复：{reply_content}\n注意：实际发送给用户的功能需要额外实现。")
-        
-    @filter.command("/封禁")
-    async def ban_user(self, event: AstrMessageEvent):
-        """封禁用户"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
-            return
-            
-        message_content = event.get_message_str()
-        parts = message_content.split(" ", 1)
-        
-        if len(parts) < 2:
-            yield event.plain_result("命令格式错误。使用方法：/封禁 <用户ID>")
-            return
-            
-        target_user_id = parts[1]
-        self.message_pool.ban_user(target_user_id)
-        yield event.plain_result(f"用户 {target_user_id} 已被封禁。")
-        
-    @filter.command("/解封")
-    async def unban_user(self, event: AstrMessageEvent):
-        """解封用户"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
-            return
-            
-        message_content = event.get_message_str()
-        parts = message_content.split(" ", 1)
-        
-        if len(parts) < 2:
-            yield event.plain_result("命令格式错误。使用方法：/解封 <用户ID>")
-            return
-            
-        target_user_id = parts[1]
-        self.message_pool.unban_user(target_user_id)
-        yield event.plain_result(f"用户 {target_user_id} 已被解封。")
-        
-    @filter.command("/查看消息池")
-    async def view_message_pool(self, event: AstrMessageEvent):
-        """查看消息池中的所有消息"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
-            return
-            
-        messages = self.message_pool.get_messages()
-        if not messages:
-            yield event.plain_result("消息池为空。")
-            return
-            
-        result = "消息池中的消息：\n"
-        for msg in messages:
-            status = "已回复" if msg["replied"] else "未回复"
-            result += f"#{msg['id']} 用户{msg['user_id']}: {msg['message']} [{status}]\n"
-            
-        yield event.plain_result(result)
-        
-    @filter.command("/查看消息")
-    async def view_message(self, event: AstrMessageEvent):
-        """查看特定消息"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
-            return
-            
-        message_content = event.get_message_str()
-        parts = message_content.split(" ", 1)
-        
-        if len(parts) < 2:
-            yield event.plain_result("命令格式错误。使用方法：/查看消息 <消息编号>")
-            return
-            
-        try:
-            message_id = int(parts[1])
-        except ValueError:
-            yield event.plain_result("消息编号必须是数字。")
-            return
-            
-        message = self.message_pool.get_message_by_id(message_id)
-        if not message:
-            yield event.plain_result("未找到指定的消息编号。")
-            return
-            
-        status = "已回复" if message["replied"] else "未回复"
-        result = f"消息#{message_id}\n用户: {message['user_id']}\n内容: {message['message']}\n状态: {status}"
-        yield event.plain_result(result)
-        
-    @filter.command("/清理内存")
+        user_msg = self.message_pool[msg_id]
+        message_detail = (
+            f"用户【{user_msg.nickname}】【{user_msg.user_id}】【{msg_id}】传话啦！！！\n"
+            f"内容：{user_msg.content}\n"
+            f"时间：{user_msg.timestamp}"
+        )
+        yield event.plain_result(message_detail)
+
+    # 清理内存指令
+    @filter.command("清理内存")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     async def clear_memory(self, event: AstrMessageEvent):
-        """清理消息池和封禁列表"""
-        user_id = event.get_sender_id()
-        
-        # 检查权限
-        if not self.is_admin(user_id):
-            yield event.plain_result("您没有权限执行此操作。")
-            return
-            
+        count = len(self.message_pool)
         self.message_pool.clear()
-        yield event.plain_result("消息池和封禁列表已清空。")
+        yield event.plain_result(f"已清理所有缓存消息，共 {count} 条")
+
+    # 管理员指令权限检查
+    @filter.command("封禁", "解封", "查看消息池", "查看消息", "清理内存", prefix=False)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    async def admin_command_permission(self, event: AstrMessageEvent):
+        yield event.plain_result("这是管理员专属指令，您没有权限使用")
+
+    # 通知管理员方法
+    async def _notify_admin(self, message: str):
+        # 获取所有管理员
+        admins = self.context.get_config().get("admins", [])
+        
+        # 给每个管理员发送消息
+        for admin_id in admins:
+            await self.context.send_message(
+                f"qq:{filter.EventMessageType.PRIVATE_MESSAGE}:{admin_id}", 
+                [Plain(message)]
+            )
+
+    # 插件终止时清理资源
+    async def terminate(self):
+        logger.info("转人工插件已终止，清理资源")
+        self.message_pool.clear()
+        self.banned_users.clear()
