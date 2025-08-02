@@ -10,7 +10,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.core.message.components import At
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
-from astrbot.core.star import StarTools  # 添加 StarTools 导入
+from astrbot.core.star import StarTools  # 确保导入 StarTools
 from astrbot.api import logger
 
 # 导入各个功能模块
@@ -29,8 +29,7 @@ from .image_generator import ImageGenerator
 class PetPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # --- 初始化路径和数据库 ---
-        # 使用 StarTools 获取插件数据目录
+        # --- 修复：使用 StarTools 获取数据目录 ---
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_pet")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
