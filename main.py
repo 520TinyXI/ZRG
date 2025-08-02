@@ -20,11 +20,11 @@ from .shop_system import ShopSystem
 from .image_generator import ImageGenerator
 
 @register(
-    "群宠物养成插件",
-    "YourName",
+    "chongwu",
+    "TinyXI",
     "一个简单的群内宠物养成插件，支持随机领养、属性克制、进化系统、状态卡、PVE与PVP对战等功能。",
-    "1.0.0",
-    "https://github.com/yourname/astrbot_plugin_pet"
+    "v1.1",
+    "https://github.com/520TinyXI/ZRG.git"
 )
 class PetPlugin(Star):
     def __init__(self, context: Context):

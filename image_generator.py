@@ -6,7 +6,19 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-from astrbot.api import logger
+# 由于无法解析 "astrbot.api" 导入，推测使用相对导入
+try:
+    from astrbot.api import logger
+except ImportError:
+    # 若相对导入失败，尝试直接导入，根据实际项目结构调整
+    try:
+        from astrbot.api import logger
+    except ImportError:
+        # 若直接导入 astrbot.api 失败，使用虚拟的 logger 替代
+        class DummyLogger:
+            def error(self, msg):
+                print(f"[ERROR] {msg}")
+        logger = DummyLogger()
 
 # 引入宠物类型数据
 from .pet_system import PET_TYPES
@@ -20,19 +32,26 @@ class ImageGenerator:
         
     def _get_pet_image_filename(self, pet_type: str, evolution_stage: int) -> str:
         """根据宠物类型和进化阶段返回对应的图片文件名"""
-        # 定义宠物类型到图片文件名的映射
-        pet_image_mapping = {
-            "碧波兽": "WaterSprite_1.png",
-            "瀚海蛟": "WaterSprite_2.png",
-            "烈焰": "FirePup_1.png",
-            "炽焰龙": "FirePup_2.png",
-            "莲莲草": "LeafyCat_1.png",
-            "百草王": "LeafyCat_2.png",
-            "碎裂岩": "cataclastic_rock_1.png",
-            "岩脊守护者": "cataclastic_rock_2.png",
-            "金刚": "King_Kong_1.png",
-            "破甲金刚": "King_Kong_2.png"
-        }
+        # 动态生成宠物类型到图片文件名的映射
+        pet_image_mapping = {}
+        for pet_type_name, pet_info in PET_TYPES.items():
+            evolutions = pet_info.get('evolutions', {})
+            for stage, evo_info in evolutions.items():
+                evo_name = evo_info.get('name', pet_type_name)
+                # 根据宠物类型和进化阶段生成图片文件名
+                if pet_type_name == "碧波兽":
+                    pet_image_mapping[evo_name] = f"WaterSprite_{stage}.png"
+                elif pet_type_name == "烈焰":
+                    pet_image_mapping[evo_name] = f"FirePup_{stage}.png"
+                elif pet_type_name == "莲莲草":
+                    pet_image_mapping[evo_name] = f"LeafyCat_{stage}.png"
+                elif pet_type_name == "碎裂岩":
+                    pet_image_mapping[evo_name] = f"cataclastic_rock_{stage}.png"
+                elif pet_type_name == "金刚":
+                    pet_image_mapping[evo_name] = f"King_Kong_{stage}.png"
+                else:
+                    # 默认使用宠物类型名称作为图片文件名
+                    pet_image_mapping[evo_name] = f"{evo_name}_{stage}.png"
         
         # 获取进化信息
         pet_type_info = PET_TYPES.get(pet_type, {})
@@ -65,8 +84,17 @@ class ImageGenerator:
                 bg_img.save(bg_path, format='PNG')
                 
             if not font_path.exists():
-                # 使用默认字体
-                font_path = None
+                # 创建默认字体文件（如果不存在）
+                try:
+                    # 创建一个简单的默认字体文件
+                    from PIL import Image, ImageDraw, ImageFont
+                    font_img = Image.new('RGB', (100, 100), color=(255, 255, 255))
+                    font_draw = ImageDraw.Draw(font_img)
+                    font_draw.text((10, 10), "A", fill=(0, 0, 0))
+                    font_img.save(font_path, format='PNG')
+                except Exception as e:
+                    logger.error(f"创建默认字体文件时发生错误: {e}")
+                    font_path = None
             
             W, H = 800, 600
             img = Image.open(bg_path).resize((W, H))

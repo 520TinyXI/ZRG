@@ -194,7 +194,7 @@ class PetSystem:
                 break
         return level_up_messages
         
-    async def adopt_pet(self, event: AstrMessageEvent, pet_name: str | None = None):
+    async def adopt_pet(self, event: object, pet_name: str | None = None):
         """领养一只随机的初始宠物"""
         user_id, group_id = event.get_sender_id(), event.get_group_id()
         if not group_id:
@@ -211,6 +211,9 @@ class PetSystem:
         if not pet_name:
             pet_name = type_name
 
+        if type_name not in PET_TYPES:
+            yield event.plain_result("未知的宠物类型。")
+            return
         pet_info = PET_TYPES[type_name]
         stats = pet_info['initial_stats']
         now = datetime.now()
@@ -229,7 +232,7 @@ class PetSystem:
         yield event.plain_result(
             f"恭喜你，{event.get_sender_name()}！命运让你邂逅了「{pet_name}」({type_name})！\n发送 /我的宠物 查看它的状态吧。")
         
-    async def my_pet_status(self, event: AstrMessageEvent):
+    async def my_pet_status(self, event: object):
         user_id, group_id = event.get_sender_id(), event.get_group_id()
 
         if not group_id:
@@ -247,7 +250,7 @@ class PetSystem:
         else:
             yield event.plain_result(result)
             
-    async def evolve_pet(self, event: AstrMessageEvent):
+    async def evolve_pet(self, event: object):
         """让达到条件的宠物进化。"""
         user_id, group_id = event.get_sender_id(), event.get_group_id()
         if not group_id:

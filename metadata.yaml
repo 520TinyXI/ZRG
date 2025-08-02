@@ -1,7 +1,5 @@
 name: chongwu
-description: "一个简单的群内宠物养成插件，支持随机领养、属性克制、进化系统、状态卡、PVE与PVP对战等功能。。"
 version: v1.1
 author: TinyXI
+ description: 一个简单的群内宠物养成插件，支持随机领养、属性克制、进化系统、状态卡、PVE与PVP对战等功能。。
 repo: https://github.com/520TinyXI/ZRG.git
-
-
