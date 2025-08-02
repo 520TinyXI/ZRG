@@ -1,17 +1,5 @@
-name: "zrg"
-desc: "一个转人工插件，用户可以发送消息给管理员，管理员可以回复用户消息"
-help: |
-  用户指令：
-  - 转人工 <消息内容> : 发送消息给管理员
-  - /transfer <消息内容> : 发送消息给管理员
-  
-  管理员指令：
-  - /回复 <消息编号> <回复内容> : 回复用户消息
-  - /封禁 <用户ID> : 封禁用户
-  - /解封 <用户ID> : 解封用户
-  - /查看消息池 : 查看所有消息
-  - /查看消息 <消息编号> : 查看特定消息
-  - /清理内存 : 清空消息池和封禁列表
-version: "1.0.0"
-author: "Soulter"
-repo: "https://github.com/Soulter/AstrBot"
+name: astrbot_plugin_pet
+version: 1.0.0
+author: YourName
+ description: 一个简单的群内宠物养成插件，支持随机领养、属性克制、进化系统、状态卡、PVE与PVP对战等功能。
+repo: https://github.com/yourname/astrbot_plugin_pet
