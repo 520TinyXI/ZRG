@@ -10,7 +10,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.core.message.components import At
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
-from astrbot.core.star import StarTools
+from astrbot.core.star import StarTools  # 添加 StarTools 导入
 from astrbot.api import logger
 
 # 导入各个功能模块
@@ -30,11 +30,14 @@ class PetPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
         # --- 初始化路径和数据库 ---
+        # 使用 StarTools 获取插件数据目录
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_pet")
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        
         # 创建一个用于存放临时状态图的缓存目录
         self.cache_dir = self.data_dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
         # 假设 assets 文件夹与插件目录同级
         self.assets_dir = Path(__file__).parent / "assets"
         self.db_path = self.data_dir / "pets.db"
