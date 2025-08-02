@@ -35,9 +35,10 @@ class ImageGenerator:
         }
         
         # 获取进化信息
-        pet_type_info = PET_TYPES[pet_type]
-        evo_info = pet_type_info['evolutions'][evolution_stage]
-        evo_name = evo_info['name']
+        pet_type_info = PET_TYPES.get(pet_type, {})
+        evolutions = pet_type_info.get('evolutions', {})
+        evo_info = evolutions.get(evolution_stage, {})
+        evo_name = evo_info.get('name', pet_type)  # 如果没有找到进化名称，则使用宠物类型名称
         
         # 返回对应的图片文件名，如果找不到则返回默认图片
         return pet_image_mapping.get(evo_name, "background.png")
