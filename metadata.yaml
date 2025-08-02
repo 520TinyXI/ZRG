@@ -1,5 +1,6 @@
-name: astrbot_plugin_pet
+name: ZRG
 version: 1.0.0
 author: YourName
  description: 一个简单的群内宠物养成插件，支持随机领养、属性克制、进化系统、状态卡、PVE与PVP对战等功能。
-repo: https://github.com/yourname/astrbot_plugin_pet
+
+repo: https://github.com/520TinyXI/ZRG.git
